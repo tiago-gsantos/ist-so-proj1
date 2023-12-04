@@ -5,4 +5,4 @@ Project 1 of the Operating Systems course @ IST - 2023/24
 Develop an Event Managment System.
 
 ### Made with:
-- [Lara Faria]()
+- [Lara Faria](https://github.com/lara-gfaria)
