@@ -17,7 +17,8 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Too few arguments\n");
     return 1;
   } 
-  else if (argc == 3) {
+
+  if (argc == 3) {
     char *endptr;
     unsigned long int delay = strtoul(argv[2], &endptr, 10);
 
@@ -35,31 +36,52 @@ int main(int argc, char *argv[]) {
   }
 
   DIR *dir = opendir(argv[1]);
-  
   if(dir == NULL){
     fprintf(stderr, "Failed to open directory.\n");
     return 1;
   }
 
   struct dirent *entry;
-  char filename[256]; //mudar realloc e /
-  
+
+  size_t dirlen = strlen(argv[1]);
+
+  if(argv[1][dirlen-1] != '/'){
+    strcat(argv[1], "/");
+    dirlen++;
+  }
+
   while ((entry = readdir(dir))!= NULL) {
+    size_t pathnamesize = dirlen + strlen(entry->d_name) + 1;
+    char filename[pathnamesize];
+
     unsigned int event_id, delay;
     size_t num_rows, num_columns, num_coords;
     size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
-
+    
     strcpy(filename, argv[1]);
     strcat(filename, entry->d_name);
-    
+
     if(strstr(filename, ".jobs") != NULL){
-      int fd = open(filename, O_RDONLY);
+      int fdjobs = open(filename, O_RDONLY);
+      if(fdjobs < 0){
+        fprintf(stderr, "Failed to open file.\n");
+        return 1;
+      }  
+
+      filename[pathnamesize - 6] = '\0';
+      strcat(filename, ".out");
+
+      int fdout = open(filename, O_CREAT | O_TRUNC | O_WRONLY);
+      if(fdout < 0){
+        fprintf(stderr, "Failed to open file.\n");
+        return 1;
+      }  
 
       int fileEnded = 0;
       while(1){
-        switch (get_next(fd)) {
+        switch (get_next(fdjobs)) {
           case CMD_CREATE:
-            if (parse_create(fd, &event_id, &num_rows, &num_columns) != 0) {
+            if (parse_create(fdjobs, &event_id, &num_rows, &num_columns) != 0) {
               fprintf(stderr, "Invalid command. See HELP for usage\n");
               continue;
             }
@@ -71,7 +93,7 @@ int main(int argc, char *argv[]) {
             break;
 
           case CMD_RESERVE:
-            num_coords = parse_reserve(fd, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+            num_coords = parse_reserve(fdjobs, MAX_RESERVATION_SIZE, &event_id, xs, ys);
 
             if (num_coords == 0) {
               fprintf(stderr, "Invalid command. See HELP for usage\n");
@@ -85,26 +107,26 @@ int main(int argc, char *argv[]) {
             break;
 
           case CMD_SHOW:
-            if (parse_show(fd, &event_id) != 0) {
+            if (parse_show(fdjobs, &event_id) != 0) {
               fprintf(stderr, "Invalid command. See HELP for usage\n");
               continue;
             }
 
-            if (ems_show(event_id)) {
+            if (ems_show(event_id, fdout)) {
               fprintf(stderr, "Failed to show event\n");
             }
 
             break;
 
           case CMD_LIST_EVENTS:
-            if (ems_list_events()) {
+            if (ems_list_events(fdout)) {
               fprintf(stderr, "Failed to list events\n");
             }
 
             break;
 
           case CMD_WAIT:
-            if (parse_wait(fd, &delay, NULL) == -1) {  // thread_id is not implemented
+            if (parse_wait(fdjobs, &delay, NULL) == -1) {  // thread_id is not implemented
               fprintf(stderr, "Invalid command. See HELP for usage\n");
               continue;
             }
@@ -144,8 +166,8 @@ int main(int argc, char *argv[]) {
         if(fileEnded)
           break;
       }
-      close(fd);
-      printf("\n");
+      close(fdjobs);
+      close(fdout);
     }
   }
   closedir(dir);

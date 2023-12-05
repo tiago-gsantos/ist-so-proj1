@@ -156,7 +156,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   return 0;
 }
 
-int ems_show(unsigned int event_id) {
+int ems_show(unsigned int event_id, int fdout) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -185,7 +185,7 @@ int ems_show(unsigned int event_id) {
   return 0;
 }
 
-int ems_list_events() {
+int ems_list_events(int fdout) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
