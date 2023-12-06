@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
+#include <string.h>
 
 #include "eventlist.h"
+#include "filewriter.h"
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
@@ -169,17 +172,31 @@ int ems_show(unsigned int event_id, int fdout) {
     return 1;
   }
 
+
+  char buffer[4];
+
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
       unsigned int* seat = get_seat_with_delay(event, seat_index(event, i, j));
-      printf("%u", *seat);
+      sprintf(buffer, "%u", *seat);
+      
+      if(write_to_file(fdout, buffer)){
+        fprintf(stderr, "Error while writing to file.\n");
+        return 1;
+      }
 
       if (j < event->cols) {
-        printf(" ");
+        if(write_to_file(fdout, " ")){
+        fprintf(stderr, "Error while writing to file.\n");
+        return 1;
+        }
       }
     }
 
-    printf("\n");
+    if(write_to_file(fdout, "\n")){
+      fprintf(stderr, "Error while writing to file.\n");
+      return 1;
+    }
   }
 
   return 0;
@@ -192,14 +209,34 @@ int ems_list_events(int fdout) {
   }
 
   if (event_list->head == NULL) {
-    printf("No events\n");
+    if(write_to_file(fdout, "No events\n")){
+      fprintf(stderr, "Error while writing to file.\n");
+      return 1;
+    }
     return 0;
   }
 
+  char buffer[16];
+  
   struct ListNode* current = event_list->head;
   while (current != NULL) {
-    printf("Event: ");
-    printf("%u\n", (current->event)->id);
+    if(write_to_file(fdout, "Event: ")){
+      fprintf(stderr, "Error while writing to file.\n");
+      return 1;
+    }
+
+    sprintf(buffer, "%u", (current->event)->id);
+
+    if(write_to_file(fdout, buffer)){
+      fprintf(stderr, "Error while writing to file.\n");
+      return 1;
+    }
+
+    if(write_to_file(fdout, "\n")){
+      fprintf(stderr, "Error while writing to file.\n");
+      return 1;
+    }
+
     current = current->next;
   }
 

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #include "constants.h"
 #include "operations.h"
@@ -71,7 +72,7 @@ int main(int argc, char *argv[]) {
       filename[pathnamesize - 6] = '\0';
       strcat(filename, ".out");
 
-      int fdout = open(filename, O_CREAT | O_TRUNC | O_WRONLY);
+      int fdout = open(filename, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
       if(fdout < 0){
         fprintf(stderr, "Failed to open file.\n");
         return 1;
