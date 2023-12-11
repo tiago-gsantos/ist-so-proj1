@@ -5,7 +5,7 @@
 #include <string.h>
 
 #include "eventlist.h"
-#include "filewriter.h"
+#include "filehandler.h"
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
