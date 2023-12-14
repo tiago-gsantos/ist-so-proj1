@@ -14,20 +14,19 @@
 #include "parser.h"
 #include "filehandler.h"
 
-#define TRUE (1)
 #define FALSE (0)
-
-#define ALL (-1)
-#define NONE (-2)
+#define TRUE (1)
 
 typedef struct {
   int fd_jobs;
   int fd_out;
+  unsigned int *wait;
+  unsigned int barrier;
+  unsigned int MAX_THREADS;
   pthread_mutex_t read_lock;
   pthread_mutex_t data_lock;
   pthread_mutex_t wait_lock;
-  unsigned int *wait;
-  unsigned int MAX_THREADS;
+  pthread_mutex_t barrier_lock;
 } thread_args;
 
 thread_args t_args;
@@ -41,13 +40,26 @@ void *execute_commands(void *arg){
   unsigned int id = *(unsigned int *)arg;
 
   while(1){
-    pthread_mutex_lock(&(t_args.wait_lock));
-    if(t_args.wait[id - 1] != 0){ //pararem todos ao mesmo tempo?
-      printf("Waiting...\n");
-      ems_wait(t_args.wait[id - 1]);
-      t_args.wait[id-1] = 0;
+    // Check barrier
+    pthread_mutex_lock(&(t_args.barrier_lock));
+    if(t_args.barrier == TRUE){
+      pthread_mutex_unlock(&(t_args.barrier_lock));
+      return (void *) &t_args.barrier;
     }
-    pthread_mutex_unlock(&(t_args.wait_lock));
+    pthread_mutex_unlock(&(t_args.barrier_lock));
+    
+    // Check wait
+    pthread_mutex_lock(&(t_args.wait_lock));
+    if(t_args.wait[id - 1] != 0){
+      printf("Waiting...\n");
+      unsigned int thread_delay = t_args.wait[id - 1];
+      t_args.wait[id - 1] = 0;
+      pthread_mutex_unlock(&(t_args.wait_lock));
+      ems_wait(thread_delay);
+    }
+    else{
+      pthread_mutex_unlock(&(t_args.wait_lock));
+    }
 
     pthread_mutex_lock(&(t_args.read_lock));
     switch (get_next(t_args.fd_jobs)) {
@@ -58,10 +70,10 @@ void *execute_commands(void *arg){
           continue;
         }
         pthread_mutex_unlock(&(t_args.read_lock));
+
         pthread_mutex_lock(&(t_args.data_lock));
         if (ems_create(event_id, num_rows, num_columns)) {
           fprintf(stderr, "Failed to create event\n");
-          pthread_mutex_unlock(&(t_args.data_lock));
         }
         pthread_mutex_unlock(&(t_args.data_lock));
         break;
@@ -74,10 +86,10 @@ void *execute_commands(void *arg){
           continue;
         }
         pthread_mutex_unlock(&(t_args.read_lock));
+
         pthread_mutex_lock(&(t_args.data_lock));
         if (ems_reserve(event_id, num_coords, xs, ys)) {
           fprintf(stderr, "Failed to reserve seats\n");
-          pthread_mutex_unlock(&(t_args.data_lock));
         }
         pthread_mutex_unlock(&(t_args.data_lock));
         break;
@@ -90,10 +102,10 @@ void *execute_commands(void *arg){
           continue;
         }
         pthread_mutex_unlock(&(t_args.read_lock));
+
         pthread_mutex_lock(&(t_args.data_lock));
         if (ems_show(event_id, t_args.fd_out)) {
           fprintf(stderr, "Failed to show event\n");
-          pthread_mutex_unlock(&(t_args.data_lock));
         }
         pthread_mutex_unlock(&(t_args.data_lock));
         break;
@@ -103,7 +115,6 @@ void *execute_commands(void *arg){
         pthread_mutex_lock(&(t_args.data_lock));
         if (ems_list_events(t_args.fd_out)) {
           fprintf(stderr, "Failed to list events\n");
-          pthread_mutex_unlock(&(t_args.data_lock));
         }
         pthread_mutex_unlock(&(t_args.data_lock));
         break;
@@ -155,24 +166,27 @@ void *execute_commands(void *arg){
             "  SHOW <event_id>\n"
             "  LIST\n"
             "  WAIT <delay_ms> [thread_id]\n"
-            "  BARRIER\n"                      // Not implemented
+            "  BARRIER\n"
             "  HELP\n");
         break;
 
-      case CMD_BARRIER:  // Not implemented
+      case CMD_BARRIER:
         pthread_mutex_unlock(&(t_args.read_lock));
-        break;
+        pthread_mutex_lock(&(t_args.barrier_lock));
+        t_args.barrier = TRUE;
+        pthread_mutex_unlock(&(t_args.barrier_lock));
+        return (void *) &t_args.barrier;
+
       case CMD_EMPTY:
         pthread_mutex_unlock(&(t_args.read_lock));
         break;
 
       case EOC:
         pthread_mutex_unlock(&(t_args.read_lock));
-        return NULL;
-        break;
+        return (void *) &t_args.barrier;
     }
   }
-  return NULL;
+  return (void *) &t_args.barrier;
 }
 
 
@@ -261,29 +275,41 @@ int main(int argc, char *argv[]) {
         pthread_mutex_init(&(t_args.read_lock), NULL);
         pthread_mutex_init(&(t_args.data_lock), NULL);
         pthread_mutex_init(&(t_args.wait_lock), NULL);
+        pthread_mutex_init(&(t_args.barrier_lock), NULL);
         
         pthread_t threads[t_args.MAX_THREADS];
         unsigned int thread_ids[t_args.MAX_THREADS];
 
         t_args.wait = (unsigned int *)malloc(t_args.MAX_THREADS * sizeof(unsigned int));
-        for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
-          t_args.wait[i] = 0;
-        }
 
-        // Create and execute threads
-        for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
-          thread_ids[i] = i+1;
-          pthread_create(&threads[i], NULL, &execute_commands, (void *)&thread_ids[i]);
+        int continue_reading_file = TRUE;
+
+        while(continue_reading_file == TRUE){
+          int *thread_ret;
+          for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
+            t_args.wait[i] = 0;
+          }
+
+          t_args.barrier = FALSE;
+
+          // Create and execute threads
+          for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
+            thread_ids[i] = i+1;
+            pthread_create(&threads[i], NULL, &execute_commands, (void *)&thread_ids[i]);
+          }
+          for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
+            pthread_join(threads[i], (void **) &thread_ret);
+          }
+          continue_reading_file = *thread_ret;
         }
-        for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
-          pthread_join(threads[i], NULL);
-        }
+        
 
         close(t_args.fd_jobs);
         close(t_args.fd_out);
         pthread_mutex_destroy(&(t_args.read_lock));
         pthread_mutex_destroy(&(t_args.data_lock));
         pthread_mutex_destroy(&(t_args.wait_lock));
+        pthread_mutex_destroy(&(t_args.barrier_lock));
         free(t_args.wait);
 
         exit(0);
