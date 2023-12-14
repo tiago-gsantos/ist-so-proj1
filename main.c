@@ -20,58 +20,82 @@
 typedef struct {
   int fd_jobs;
   int fd_out;
-  pthread_mutex_t mutex;
+  pthread_mutex_t read_lock;
+  pthread_mutex_t data_lock;
 } thread_args;
 
-void *execute_commands(void *arg){
+thread_args t_args;
+
+void *execute_commands(){
   unsigned int event_id, delay;
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
-  
-  thread_args t_args = *(thread_args *) arg;
 
   while(1){
+    pthread_mutex_lock(&(t_args.read_lock));
+
     switch (get_next(t_args.fd_jobs)) {
       case CMD_CREATE:
         if (parse_create(t_args.fd_jobs, &event_id, &num_rows, &num_columns) != 0) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
+          pthread_mutex_unlock(&(t_args.read_lock));
           continue;
         }
+        pthread_mutex_unlock(&(t_args.read_lock));
+        pthread_mutex_lock(&(t_args.data_lock));
         if (ems_create(event_id, num_rows, num_columns)) {
           fprintf(stderr, "Failed to create event\n");
+          pthread_mutex_unlock(&(t_args.data_lock));
         }
+        pthread_mutex_unlock(&(t_args.data_lock));
         break;
 
       case CMD_RESERVE:
         num_coords = parse_reserve(t_args.fd_jobs, MAX_RESERVATION_SIZE, &event_id, xs, ys);
         if (num_coords == 0) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
+          pthread_mutex_unlock(&(t_args.read_lock));
           continue;
         }
+        pthread_mutex_unlock(&(t_args.read_lock));
+        pthread_mutex_lock(&(t_args.data_lock));
         if (ems_reserve(event_id, num_coords, xs, ys)) {
           fprintf(stderr, "Failed to reserve seats\n");
+          pthread_mutex_unlock(&(t_args.data_lock));
         }
+        pthread_mutex_unlock(&(t_args.data_lock));
         break;
 
       case CMD_SHOW:
+        
         if (parse_show(t_args.fd_jobs, &event_id) != 0) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
+          pthread_mutex_unlock(&(t_args.read_lock));
           continue;
         }
+        pthread_mutex_unlock(&(t_args.read_lock));
+        pthread_mutex_lock(&(t_args.data_lock));
         if (ems_show(event_id, t_args.fd_out)) {
           fprintf(stderr, "Failed to show event\n");
+          pthread_mutex_unlock(&(t_args.data_lock));
         }
+        pthread_mutex_unlock(&(t_args.data_lock));
         break;
 
       case CMD_LIST_EVENTS:
+        pthread_mutex_unlock(&(t_args.read_lock));
+        pthread_mutex_lock(&(t_args.data_lock));
         if (ems_list_events(t_args.fd_out)) {
           fprintf(stderr, "Failed to list events\n");
+          pthread_mutex_unlock(&(t_args.data_lock));
         }
+        pthread_mutex_unlock(&(t_args.data_lock));
         break;
 
       case CMD_WAIT:
         if (parse_wait(t_args.fd_jobs, &delay, NULL) == -1) {  // thread_id is not implemented
           fprintf(stderr, "Invalid command. See HELP for usage\n");
+          pthread_mutex_unlock(&(t_args.read_lock));
           continue;
         }
         if (delay > 0) {
@@ -81,10 +105,12 @@ void *execute_commands(void *arg){
         break;
 
       case CMD_INVALID:
+        pthread_mutex_unlock(&(t_args.read_lock));
         fprintf(stderr, "Invalid command. See HELP for usage\n");
         break;
 
       case CMD_HELP:
+        pthread_mutex_unlock(&(t_args.read_lock));
         printf(
             "Available commands:\n"
             "  CREATE <event_id> <num_rows> <num_columns>\n"
@@ -97,10 +123,14 @@ void *execute_commands(void *arg){
         break;
 
       case CMD_BARRIER:  // Not implemented
+        pthread_mutex_unlock(&(t_args.read_lock));
+        break;
       case CMD_EMPTY:
+        pthread_mutex_unlock(&(t_args.read_lock));
         break;
 
       case EOC:
+        pthread_mutex_unlock(&(t_args.read_lock));
         return NULL;
         break;
     }
@@ -150,7 +180,6 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Failed to open directory.\n");
     return 1;
   }
-
   struct dirent *entry;
 
   unsigned int num_active_proc = 0; 
@@ -185,21 +214,21 @@ int main(int argc, char *argv[]) {
         return 1;
       }
       else if(pid == 0){ // Child process
-        thread_args t_args;
-
-        pthread_mutex_init(&(t_args.mutex), NULL);
-      
+        
         // Open .jobs file and create respective .out file
         if(open_file(argv[1], entry->d_name, &(t_args.fd_jobs), &(t_args.fd_out)) < 0){
           fprintf(stderr, "Failed to open file.\n");
           return 1;
         }
 
+        pthread_mutex_init(&(t_args.read_lock), NULL);
+        pthread_mutex_init(&(t_args.data_lock), NULL);
+        
         pthread_t threads[MAX_THREADS];
 
         // Create and execute threads
         for(unsigned int i = 0; i < MAX_THREADS; i++){ 
-          pthread_create(&threads[i], NULL, &execute_commands, &t_args);
+          pthread_create(&threads[i], NULL, &execute_commands, NULL);
         }
         for(unsigned int i = 0; i < MAX_THREADS; i++){
           pthread_join(threads[i], NULL);
@@ -207,8 +236,9 @@ int main(int argc, char *argv[]) {
 
         close(t_args.fd_jobs);
         close(t_args.fd_out);
-        pthread_mutex_destroy(&(t_args.mutex));
-        
+        pthread_mutex_destroy(&(t_args.read_lock));
+        pthread_mutex_destroy(&(t_args.data_lock));
+
         exit(0);
       }
     }

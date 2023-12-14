@@ -172,7 +172,6 @@ int ems_show(unsigned int event_id, int fdout) {
     return 1;
   }
 
-
   char buffer[4];
 
   for (size_t i = 1; i <= event->rows; i++) {
