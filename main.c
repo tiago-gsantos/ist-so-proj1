@@ -17,23 +17,39 @@
 #define TRUE (1)
 #define FALSE (0)
 
+#define ALL (-1)
+#define NONE (-2)
+
 typedef struct {
   int fd_jobs;
   int fd_out;
   pthread_mutex_t read_lock;
   pthread_mutex_t data_lock;
+  pthread_mutex_t wait_lock;
+  unsigned int *wait;
+  unsigned int MAX_THREADS;
 } thread_args;
 
 thread_args t_args;
 
-void *execute_commands(){
-  unsigned int event_id, delay;
+void *execute_commands(void *arg){
+  unsigned int event_id, delay, thread_id;
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
-  while(1){
-    pthread_mutex_lock(&(t_args.read_lock));
+  // Thread ID
+  unsigned int id = *(unsigned int *)arg;
 
+  while(1){
+    pthread_mutex_lock(&(t_args.wait_lock));
+    if(t_args.wait[id - 1] != 0){ //pararem todos ao mesmo tempo?
+      printf("Waiting...\n");
+      ems_wait(t_args.wait[id - 1]);
+      t_args.wait[id-1] = 0;
+    }
+    pthread_mutex_unlock(&(t_args.wait_lock));
+
+    pthread_mutex_lock(&(t_args.read_lock));
     switch (get_next(t_args.fd_jobs)) {
       case CMD_CREATE:
         if (parse_create(t_args.fd_jobs, &event_id, &num_rows, &num_columns) != 0) {
@@ -93,15 +109,36 @@ void *execute_commands(){
         break;
 
       case CMD_WAIT:
-        if (parse_wait(t_args.fd_jobs, &delay, NULL) == -1) {  // thread_id is not implemented
+        int wait_ret = parse_wait(t_args.fd_jobs, &delay, &thread_id);
+        pthread_mutex_unlock(&(t_args.read_lock));
+
+        if (wait_ret == -1) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
-          pthread_mutex_unlock(&(t_args.read_lock));
           continue;
         }
-        if (delay > 0) {
-          printf("Waiting...\n");
-          ems_wait(delay);
+        else if(wait_ret == 0){
+          if(delay > 0){
+            pthread_mutex_lock(&(t_args.wait_lock));
+            for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
+              t_args.wait[i] = delay;
+            }
+            pthread_mutex_unlock(&(t_args.wait_lock));
+          }
         }
+        else if(wait_ret == 1){
+          if(thread_id <= t_args.MAX_THREADS){
+            if(delay > 0){
+              pthread_mutex_lock(&(t_args.wait_lock));
+              t_args.wait[thread_id - 1] = delay;
+              pthread_mutex_unlock(&(t_args.wait_lock));
+            }
+          }
+          else{
+            fprintf(stderr, "Invalid thread_id\n");
+            continue;
+          }
+        }
+        
         break;
 
       case CMD_INVALID:
@@ -117,7 +154,7 @@ void *execute_commands(){
             "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
             "  SHOW <event_id>\n"
             "  LIST\n"
-            "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
+            "  WAIT <delay_ms> [thread_id]\n"
             "  BARRIER\n"                      // Not implemented
             "  HELP\n");
         break;
@@ -148,7 +185,7 @@ int main(int argc, char *argv[]) {
   }
 
   const unsigned int MAX_PROC = (unsigned int)atoi(argv[2]);
-  const unsigned int MAX_THREADS = (unsigned int)atoi(argv[3]);
+  t_args.MAX_THREADS = (unsigned int)atoi(argv[3]);
 
   // Set delay
   if (argc == 5) {
@@ -223,14 +260,22 @@ int main(int argc, char *argv[]) {
 
         pthread_mutex_init(&(t_args.read_lock), NULL);
         pthread_mutex_init(&(t_args.data_lock), NULL);
+        pthread_mutex_init(&(t_args.wait_lock), NULL);
         
-        pthread_t threads[MAX_THREADS];
+        pthread_t threads[t_args.MAX_THREADS];
+        unsigned int thread_ids[t_args.MAX_THREADS];
+
+        t_args.wait = (unsigned int *)malloc(t_args.MAX_THREADS * sizeof(unsigned int));
+        for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
+          t_args.wait[i] = 0;
+        }
 
         // Create and execute threads
-        for(unsigned int i = 0; i < MAX_THREADS; i++){ 
-          pthread_create(&threads[i], NULL, &execute_commands, NULL);
+        for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
+          thread_ids[i] = i+1;
+          pthread_create(&threads[i], NULL, &execute_commands, (void *)&thread_ids[i]);
         }
-        for(unsigned int i = 0; i < MAX_THREADS; i++){
+        for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
           pthread_join(threads[i], NULL);
         }
 
@@ -238,6 +283,8 @@ int main(int argc, char *argv[]) {
         close(t_args.fd_out);
         pthread_mutex_destroy(&(t_args.read_lock));
         pthread_mutex_destroy(&(t_args.data_lock));
+        pthread_mutex_destroy(&(t_args.wait_lock));
+        free(t_args.wait);
 
         exit(0);
       }
