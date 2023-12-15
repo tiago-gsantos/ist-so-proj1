@@ -17,151 +17,241 @@
 #define FALSE (0)
 #define TRUE (1)
 
+
 typedef struct {
-  int fd_jobs;
-  int fd_out;
-  unsigned int *wait;
-  unsigned int barrier;
-  unsigned int MAX_THREADS;
+  int fd_jobs;              // file descriptor for the .jobs file
+  int fd_out;               // file descriptor for the .out file
+  unsigned int *wait;       // pointer to array with the delays of each thread
+  unsigned int barrier;     // indicates if a barrier was found by a thread
+  unsigned int MAX_THREADS; // max number of threads of each process
 } thread_args;
 
 thread_args t_args;
 
+
 pthread_mutex_t read_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t wait_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t barrier_lock = PTHREAD_MUTEX_INITIALIZER;
+
 
 void *execute_commands(void *arg){
   unsigned int event_id, delay, thread_id;
   size_t num_rows, num_columns, num_coords;
   size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
-  // Thread ID
-  unsigned int id = *(unsigned int *)arg;
+  unsigned int id = *(unsigned int *)arg; // Thread ID
+
 
   while(1){
-    // Check barrier
     if(pthread_mutex_lock(&barrier_lock) != 0){
-      fprintf(stderr, "Failed to lock mutex");
+      fprintf(stderr, "Failed to lock mutex\n");
       exit(1);
     }
+
+    // Check if barrier was encountered
     if(t_args.barrier == TRUE){
       if(pthread_mutex_unlock(&barrier_lock) != 0){
-        fprintf(stderr, "Failed to unlock mutex");
+        fprintf(stderr, "Failed to unlock mutex\n");
         exit(1);
       }
       return (void *) &t_args.barrier;
     }
+
     if(pthread_mutex_unlock(&barrier_lock) != 0){
-      fprintf(stderr, "Failed to unlock mutex");
+      fprintf(stderr, "Failed to unlock mutex\n");
       exit(1);
     }
 
-    
-    // Check wait
+
     if(pthread_mutex_lock(&wait_lock) != 0){
-      fprintf(stderr, "Failed to lock mutex");
+      fprintf(stderr, "Failed to lock mutex\n");
       exit(1);
     }
+
+    // Check if thread needs to wait
     if(t_args.wait[id - 1] != 0){
       fprintf(stdout, "Waiting...\n");
+
       unsigned int thread_delay = t_args.wait[id - 1];
+      
       t_args.wait[id - 1] = 0;
-      pthread_mutex_unlock(&wait_lock);
+      
+      if(pthread_mutex_unlock(&wait_lock) != 0){
+        fprintf(stderr, "Failed to unlock mutex\n");
+        exit(1);
+      }
+
       ems_wait(thread_delay);
     }
     else{
-      pthread_mutex_unlock(&wait_lock);
+      if(pthread_mutex_unlock(&wait_lock) != 0){
+        fprintf(stderr, "Failed to unlock mutex\n");
+        exit(1);
+      }
     }
 
-    pthread_mutex_lock(&read_lock);
+
+    if(pthread_mutex_lock(&read_lock) != 0){
+      fprintf(stderr, "Failed to lock mutex\n");
+      exit(1);
+    }
+
     switch (get_next(t_args.fd_jobs)) {
       case CMD_CREATE:
         if (parse_create(t_args.fd_jobs, &event_id, &num_rows, &num_columns) != 0) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
-          pthread_mutex_unlock(&read_lock);
+          
+          if(pthread_mutex_unlock(&read_lock) != 0){
+            fprintf(stderr, "Failed to unlock mutex\n");
+            exit(1);
+          }
           continue;
         }
-        pthread_mutex_unlock(&read_lock);
+
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
 
         if (ems_create(event_id, num_rows, num_columns)) {
           fprintf(stderr, "Failed to create event\n");
         }
+
         break;
 
       case CMD_RESERVE:
         num_coords = parse_reserve(t_args.fd_jobs, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+        
         if (num_coords == 0) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
-          pthread_mutex_unlock(&read_lock);
+          
+          if(pthread_mutex_unlock(&read_lock) != 0){
+            fprintf(stderr, "Failed to unlock mutex\n");
+            exit(1);
+          }
+          
           continue;
         }
-        pthread_mutex_unlock(&read_lock);
+
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
 
         if (ems_reserve(event_id, num_coords, xs, ys)) {
           fprintf(stderr, "Failed to reserve seats\n");
         }
+
         break;
 
       case CMD_SHOW:
         if (parse_show(t_args.fd_jobs, &event_id) != 0) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
-          pthread_mutex_unlock(&read_lock);
+          
+          if(pthread_mutex_unlock(&read_lock) != 0){
+            fprintf(stderr, "Failed to unlock mutex\n");
+            exit(1);
+          }
+          
           continue;
         }
-        pthread_mutex_unlock(&read_lock);
+
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
 
         if (ems_show(event_id, t_args.fd_out)) {
           fprintf(stderr, "Failed to show event\n");
         }
+
         break;
 
       case CMD_LIST_EVENTS:
-        pthread_mutex_unlock(&read_lock);
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
+
         if (ems_list_events(t_args.fd_out)) {
           fprintf(stderr, "Failed to list events\n");
         }
+
         break;
 
       case CMD_WAIT:
         int wait_ret = parse_wait(t_args.fd_jobs, &delay, &thread_id);
-        pthread_mutex_unlock(&read_lock);
+
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
 
         if (wait_ret == -1) {
           fprintf(stderr, "Invalid command. See HELP for usage\n");
           continue;
         }
+        // Set delay for all threads
         else if(wait_ret == 0){
           if(delay > 0){
-            pthread_mutex_lock(&wait_lock);
+            if(pthread_mutex_lock(&wait_lock) != 0){
+              fprintf(stderr, "Failed to lock mutex\n");
+              exit(1);
+            }
+            
             for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
               t_args.wait[i] = delay;
             }
-            pthread_mutex_unlock(&wait_lock);
+            
+            if(pthread_mutex_unlock(&wait_lock) != 0){
+              fprintf(stderr, "Failed to unlock mutex\n");
+              exit(1);
+            }
           }
         }
+        // Set delay for the indicated thread
         else if(wait_ret == 1){
           if(thread_id <= t_args.MAX_THREADS){
             if(delay > 0){
-              pthread_mutex_lock(&wait_lock);
+              
+              if(pthread_mutex_lock(&wait_lock) != 0){
+                fprintf(stderr, "Failed to lock mutex\n");
+                exit(1);
+              }
+              
               t_args.wait[thread_id - 1] = delay;
-              pthread_mutex_unlock(&wait_lock);
+              
+              if(pthread_mutex_unlock(&wait_lock) != 0){
+                fprintf(stderr, "Failed to unlock mutex\n");
+                exit(1);
+              }
             }
           }
           else{
             fprintf(stderr, "Invalid thread_id\n");
+            
             continue;
           }
         }
+
         break;
 
       case CMD_INVALID:
-        pthread_mutex_unlock(&read_lock);
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
+
         fprintf(stderr, "Invalid command. See HELP for usage\n");
+        
         break;
 
       case CMD_HELP:
-        pthread_mutex_unlock(&read_lock);
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
+        
         printf(
             "Available commands:\n"
             "  CREATE <event_id> <num_rows> <num_columns>\n"
@@ -171,24 +261,47 @@ void *execute_commands(void *arg){
             "  WAIT <delay_ms> [thread_id]\n"
             "  BARRIER\n"
             "  HELP\n");
+        
         break;
 
       case CMD_BARRIER:
-        pthread_mutex_unlock(&read_lock);
-        pthread_mutex_lock(&barrier_lock);
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
+        
+        if(pthread_mutex_lock(&barrier_lock) != 0){
+          fprintf(stderr, "Failed to lock mutex\n");
+          exit(1);
+        }
+        
         t_args.barrier = TRUE;
-        pthread_mutex_unlock(&barrier_lock);
+        
+        if(pthread_mutex_unlock(&barrier_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
+
         return (void *) &t_args.barrier;
 
       case CMD_EMPTY:
-        pthread_mutex_unlock(&read_lock);
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
+        
         break;
 
       case EOC:
-        pthread_mutex_unlock(&read_lock);
+        if(pthread_mutex_unlock(&read_lock) != 0){
+          fprintf(stderr, "Failed to unlock mutex\n");
+          exit(1);
+        }
+        
         return (void *) &t_args.barrier;
     }
   }
+
   return (void *) &t_args.barrier;
 }
 
@@ -247,19 +360,21 @@ int main(int argc, char *argv[]) {
 
         if(WIFEXITED(status)){
           if(WEXITSTATUS(status) == -1){
-              fprintf(stderr,"Error while terminating child processor\n");
-              return 1;
+            fprintf(stderr,"Error while terminating child processor\n");
+            return 1;
           }
           // Print child termination status
           fprintf(stdout, "Child process %d terminated with status %d\n", child_pid, status);
+          
           num_active_proc--;
         }
         else{
-            fprintf(stderr, "Failed to terminate child processor\n");
-            return 1;
+          fprintf(stderr, "Failed to terminate child processor\n");
+          return 1;
         }
       }
       
+      // Fork child process
       num_active_proc++;
       pid_t pid = fork();
 
@@ -275,15 +390,18 @@ int main(int argc, char *argv[]) {
           return 1;
         }
         
-        pthread_t threads[t_args.MAX_THREADS];
-        unsigned int thread_ids[t_args.MAX_THREADS];
+        pthread_t threads[t_args.MAX_THREADS]; // Thread array
+        unsigned int thread_ids[t_args.MAX_THREADS]; // Thread IDs array
 
         t_args.wait = (unsigned int *)malloc(t_args.MAX_THREADS * sizeof(unsigned int));
+        
+        if(!t_args.wait) return 1;
 
-        int continue_reading_file = TRUE;
+        int continue_reading_file = TRUE; // TRUE if a barrier is found and FALSE if the file ended
 
         while(continue_reading_file == TRUE){
           int *thread_ret;
+
           for(unsigned int i = 0; i < t_args.MAX_THREADS; i++){
             t_args.wait[i] = 0;
           }
@@ -323,6 +441,7 @@ int main(int argc, char *argv[]) {
       }
       // Print child termination status
       fprintf(stdout, "Child process %d terminated with status %d\n", child_pid, status);
+      
       num_active_proc--;
     }
     else{
@@ -330,6 +449,8 @@ int main(int argc, char *argv[]) {
       return 1;
     }
   }
+  
   closedir(dir);
+  
   ems_terminate();
 }

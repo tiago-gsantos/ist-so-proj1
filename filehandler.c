@@ -6,6 +6,7 @@
 #include <fcntl.h>
 
 int open_file(char *dir_path, char *file_name, int *fd_jobs, int *fd_out){
+  // .jobs file path = directory path + name of file
   size_t path_len = strlen(dir_path) + strlen(file_name) + 1;
   char file_path[path_len];
 
@@ -17,6 +18,7 @@ int open_file(char *dir_path, char *file_name, int *fd_jobs, int *fd_out){
     return -1;
   }  
 
+  // .out file path = .jobs file path - ".jobs" + ".out"
   file_path[path_len - 6] = '\0';
   strcat(file_path, ".out");
 
@@ -31,6 +33,7 @@ int open_file(char *dir_path, char *file_name, int *fd_jobs, int *fd_out){
 int write_to_file(int fd, char *buffer){ 
   size_t len = strlen(buffer);
   long int done = 0;
+  
   while(len > 0){
     long int bytes_written = write(fd, buffer + done, len);
 

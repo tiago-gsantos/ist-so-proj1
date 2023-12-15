@@ -5,7 +5,8 @@
 #include <pthread.h>
 
 struct Seat {
-  unsigned int reservation_id;
+  unsigned int reservation_id;  /// Seat reservation ID
+
   pthread_mutex_t seat_lock;
 };
 

@@ -1,11 +1,15 @@
 #include "eventlist.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 
 struct EventList* create_list() {
   struct EventList* list = (struct EventList*)malloc(sizeof(struct EventList));
   if (!list) return NULL;
-  pthread_mutex_init(&list->event_list_lock, NULL);
+  if(pthread_mutex_init(&list->event_list_lock, NULL) != 0){
+    fprintf(stderr, "Failed to initialize mutex\n");
+    exit(1);
+  }
   list->head = NULL;
   list->tail = NULL;
   return list;
@@ -33,7 +37,10 @@ int append_to_list(struct EventList* list, struct Event* event) {
 
 static void free_event(struct Event* event) {
   if (!event) return;
-  pthread_mutex_destroy(&event->event_lock);
+  if(pthread_mutex_destroy(&event->event_lock) != 0){
+    fprintf(stderr, "Failed to destroy mutex\n");
+    exit(1);
+  }
   free(event->data);
   free(event);
 }
@@ -49,7 +56,10 @@ void free_list(struct EventList* list) {
     free_event(temp->event);
     free(temp);
   }
-  pthread_mutex_destroy(&list->event_list_lock);
+  if(pthread_mutex_destroy(&list->event_list_lock) != 0){
+    fprintf(stderr, "Failed to destroy mutex\n");
+    exit(1);
+  }
   free(list);
 }
 
