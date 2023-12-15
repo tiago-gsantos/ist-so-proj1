@@ -41,16 +41,28 @@ void *execute_commands(void *arg){
 
   while(1){
     // Check barrier
-    pthread_mutex_lock(&barrier_lock);
+    if(pthread_mutex_lock(&barrier_lock) != 0){
+      fprintf(stderr, "Failed to lock mutex");
+      exit(1);
+    }
     if(t_args.barrier == TRUE){
-      pthread_mutex_unlock(&barrier_lock);
+      if(pthread_mutex_unlock(&barrier_lock) != 0){
+        fprintf(stderr, "Failed to unlock mutex");
+        exit(1);
+      }
       return (void *) &t_args.barrier;
     }
-    pthread_mutex_unlock(&barrier_lock);
+    if(pthread_mutex_unlock(&barrier_lock) != 0){
+      fprintf(stderr, "Failed to unlock mutex");
+      exit(1);
+    }
 
     
     // Check wait
-    pthread_mutex_lock(&wait_lock);
+    if(pthread_mutex_lock(&wait_lock) != 0){
+      fprintf(stderr, "Failed to lock mutex");
+      exit(1);
+    }
     if(t_args.wait[id - 1] != 0){
       fprintf(stdout, "Waiting...\n");
       unsigned int thread_delay = t_args.wait[id - 1];
