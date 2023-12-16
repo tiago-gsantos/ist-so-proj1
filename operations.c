@@ -220,6 +220,9 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     }
   }
 
+  // First seat is invalid
+  if((int) i < 0) return 1;
+
   // If one of the seats is invalid or already reserved, unlock previous seats
   if (i < num_seats) {
     for (size_t j = 0; j <= i; j++) {
