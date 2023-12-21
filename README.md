@@ -1,4 +1,4 @@
-# ist-so-proj1
+# SO - Project 1
 Project 1 of the Operating Systems course @ IST - 2023/24
 
 ### Objective
